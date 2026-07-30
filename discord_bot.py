@@ -89,6 +89,16 @@ def _build_deal_embed(deal, ai_rating="", price_note=""):
         top = "\n".join(f"• {r}" for r in reasons[:5])
         embed.add_field(name="🧠 Why this ranked highly", value=top[:1024], inline=False)
 
+    other_offers = (deal.get("metadata") or {}).get("other_offers") or []
+    if other_offers:
+        alt = "\n".join(
+            f"• {o.get('store', 'Unknown')}: ${o.get('price'):.2f}"
+            for o in other_offers[:5]
+            if isinstance(o.get("price"), (int, float))
+        )
+        if alt:
+            embed.add_field(name="🛍️ Also available at", value=alt[:1024], inline=False)
+
     if price_note:
         embed.add_field(name="📈 Price Trend", value=price_note, inline=False)
 

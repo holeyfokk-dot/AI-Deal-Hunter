@@ -8,6 +8,7 @@ from models.deal_result import DealResult
 from models.result_status import ResultStatus
 from price_history import load_prices
 from tools.deal_scoring import market_average, parse_price, score_item
+from tools.product_dedup import best_offer, consolidate_offers
 from tools.product_relevance import classify_product_type, group_results
 from tools.retailer_url import resolve_item_url
 from tools.search_tool import SearchTool
@@ -74,7 +75,13 @@ class Merchant(BaseAgent):
             group_avg = market_average(group_prices)
             group_size = len(group_items)
 
-            for item in group_items:
+            # Duplicate suppression: collapse the same product (across duplicate
+            # rows / sellers) into one, and pick the best offer.
+            clusters = consolidate_offers(group_items)
+
+            for cluster_items in clusters.values():
+                item, other_offers = best_offer(cluster_items, group_avg)
+
                 current_price = parse_price(item.get("price", item.get("extracted_price")))
                 if current_price is None:
                     continue
@@ -104,7 +111,16 @@ class Merchant(BaseAgent):
                 reasons = [
                     f"[+] Matched product group '{group_name}' "
                     f"(compared against {group_size} like-for-like listing(s))"
-                ] + breakdown.reasons
+                ]
+                if other_offers:
+                    cheapest_alt = ", ".join(
+                        f"{o['store']} ${o['price']:.2f}" for o in other_offers[:3]
+                    )
+                    reasons.append(
+                        f"[+] Best of {len(other_offers) + 1} offers for this product "
+                        f"(also: {cheapest_alt})"
+                    )
+                reasons += breakdown.reasons
 
                 deal = DealResult(
                     id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
@@ -129,6 +145,8 @@ class Merchant(BaseAgent):
                         "source": store,
                         "product_type": classify_product_type(product_name).value,
                         "product_group": group_name,
+                        "offer_count": len(other_offers) + 1,
+                        "other_offers": other_offers,
                     },
                     score_reasons=reasons,
                 )

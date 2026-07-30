@@ -149,6 +149,27 @@ and rejects apples-to-oranges matches so deals are only compared like-for-like:
   within a product group, so a $1,500 prebuilt no longer inflates a CPU's
   "market average".
 
+## Duplicate suppression (one product, best offer)
+
+`tools/product_dedup.py` collapses duplicate listings of the same product (the
+same row twice, or the same product from multiple sellers) into a single product
+and picks the **best (cheapest realistic) offer**, so the bot posts one deal per
+product instead of many near-duplicates:
+
+```
+RTX 5070 ASUS TUF OC → Amazon $589 · Best Buy $579 · Newegg $574 · Walmart $599
+                     → one product, best offer = Newegg $574
+```
+
+Products are identified by Google's catalog `product_id` when available, with a
+brand + model + variant fallback. Unrealistic lowball prices are not chosen as the
+best offer when a realistic alternative exists, and the alternatives are shown as
+"Also available at" in the Discord embed.
+
+> **Next step:** identify products by **GTIN / UPC / MPN / Manufacturer Part
+> Number** (e.g. `90YV0M80-M0AA00`) instead of text, for exact cross-retailer
+> matching. `product_id` is the closest identifier SerpAPI exposes today.
+
 ## Deal scoring (false-positive reduction)
 
 Deals are ranked by `tools/deal_scoring.py`, which combines several signals into a

@@ -117,6 +117,14 @@ def run():
         for reason in best.get("score_reasons", []):
             print(f"   • {reason}")
 
+        other_offers = (best.get("metadata") or {}).get("other_offers") or []
+        if other_offers:
+            print("   🛍️ Also available at:")
+            for offer in other_offers[:5]:
+                price_val = offer.get("price")
+                if isinstance(price_val, (int, float)):
+                    print(f"      - {offer.get('store', 'Unknown')}: ${price_val:.2f}")
+
         price_note = ""
 
         if old_price is None:

@@ -32,6 +32,16 @@ The genuine core (agent auto-discovery, `AgentManager.route("search", ...)`, and
 single external HTTP boundary `search_api.google_shopping_search` (also imported by name in
 `tools/search_tool.py`, so patch it in both). Run harness scripts with `PYTHONPATH=/workspace`.
 
+### Duplicate suppression (one product per deal)
+`tools/product_dedup.py` runs inside `Merchant._build_deals` after grouping:
+`consolidate_offers` clusters listings by `canonical_product_key` (Google `product_id`,
+else brand+model+variant), and `best_offer` picks the cheapest realistic offer per cluster
+(skipping unrealistic lowballs). One `DealResult` is emitted per product; the alternatives
+are stored in `metadata["other_offers"]` and shown as "Also available at" in the embed.
+Limitation: SerpAPI's immersive stores don't include per-seller prices and `google_product`
+isn't available on this key, so cross-retailer price comparison uses the shopping-result
+rows. Matching by GTIN/UPC/MPN is the intended next step.
+
 ### Product relevance / grouping (before scoring)
 `tools/product_relevance.py` runs before scoring in `Merchant._build_deals`:
 `group_results(query, items)` classifies each listing (`classify_product_type`:
