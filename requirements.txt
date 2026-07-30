@@ -1,0 +1,6 @@
+# AI Deal Hunter dependencies
+discord.py
+google-search-results
+requests
+python-dotenv
+psutil
