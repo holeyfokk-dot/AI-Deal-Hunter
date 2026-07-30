@@ -1,3 +1,4 @@
+import requests 
 from serpapi import GoogleSearch
 from dotenv import load_dotenv
 import os
@@ -19,5 +20,12 @@ def google_shopping_search(query):
 
     search = GoogleSearch(params)
     results = search.get_dict()
+
+    shopping_results = results.get("shopping_results", [])
+
+    if shopping_results:
+        print("\n===== FIRST RESULT =====")
+        print(shopping_results[0])
+        print("========================\n")
 
     return results
