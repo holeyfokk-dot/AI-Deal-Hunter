@@ -129,6 +129,26 @@ act workflow_dispatch -W .github/workflows/deal-hunter.yml \
   -s SERPAPI_KEY="$SERPAPI_KEY" -s DISCORD_TOKEN="$DISCORD_TOKEN" -s CHANNEL_ID="$CHANNEL_ID"
 ```
 
+## Deal scoring (false-positive reduction)
+
+Deals are ranked by `tools/deal_scoring.py`, which combines several signals into a
+`deal_score` (0–1) and a `confidence_score` (0–1), and returns human-readable
+`reasons` (surfaced in the Discord embed and console):
+
+- **Unrealistic prices** — a price far below the market average (median of the
+  result set) or the last-seen price is flagged as likely fake/error instead of
+  an "amazing deal" (e.g. a "$28 PS5 Pro" sinks to the bottom).
+- **Seller reputation** — third-party marketplace sellers (the `Store - Seller`
+  pattern, eBay, AliExpress, etc.) are penalized.
+- **First-party preference** — Amazon, Walmart, Best Buy, Target, Costco, Newegg,
+  Micro Center, and B&H are boosted.
+- **Accessories / non-main-product listings** are ignored (controllers, cases,
+  docks, chargers, …) unless the listing is the actual product.
+- **Condition** — refurbished / open-box / used / parts-only / damaged listings
+  are penalized unless the query explicitly asks for that condition.
+
+The `DealResult.score_reasons` list explains why a deal ranked highly.
+
 ## Direct retailer links
 
 Deal alerts link **straight to the retailer's product page** (Amazon, Best Buy,

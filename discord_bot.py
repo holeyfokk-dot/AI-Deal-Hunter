@@ -80,6 +80,15 @@ def _build_deal_embed(deal, ai_rating="", price_note=""):
     if deal_score is not None:
         embed.add_field(name="📊 Deal Score", value=str(deal_score), inline=True)
 
+    confidence = deal.get("confidence_score")
+    if confidence is not None:
+        embed.add_field(name="🎯 Confidence", value=f"{confidence}", inline=True)
+
+    reasons = deal.get("score_reasons") or []
+    if reasons:
+        top = "\n".join(f"• {r}" for r in reasons[:5])
+        embed.add_field(name="🧠 Why this ranked highly", value=top[:1024], inline=False)
+
     if price_note:
         embed.add_field(name="📈 Price Trend", value=price_note, inline=False)
 

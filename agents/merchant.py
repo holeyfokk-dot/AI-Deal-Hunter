@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import AgentMetadata, BaseAgent
-from ai import matches_search
 from models.deal_result import DealResult
 from models.result_status import ResultStatus
+from price_history import load_prices
+from tools.deal_scoring import market_average, parse_price, score_item
 from tools.retailer_url import resolve_item_url
 from tools.search_tool import SearchTool
 
@@ -50,63 +51,74 @@ class Merchant(BaseAgent):
         }
 
     def _build_deals(self, query: str, items: List[Dict[str, Any]]) -> List[DealResult]:
+        # Market average (median) across the result set, used to flag
+        # unrealistic prices and quantify genuine discounts.
+        prices = [
+            price
+            for price in (parse_price(item.get("price", item.get("extracted_price"))) for item in items)
+            if price is not None
+        ]
+        market_avg = market_average(prices)
+        history = load_prices()
+
         deal_results: List[DealResult] = []
-        scores: List[float] = []
 
         for item in items:
-            current_price = self._parse_price(item.get("price"))
+            current_price = parse_price(item.get("price", item.get("extracted_price")))
             if current_price is None:
                 continue
 
             product_name = item.get("title", "Unknown")
             store = item.get("source", "Unknown")
+
+            breakdown = score_item(
+                item,
+                query,
+                market_avg,
+                historical_price=history.get(product_name),
+            )
+
+            # Requirement 4: ignore accessories / non-main-product listings.
+            if breakdown.excluded:
+                continue
+
+            discount = self._parse_discount(item)
+
             # Never store a Google Shopping URL. Use a direct retailer link when
             # already present, otherwise the retailer homepage as a cheap
             # fallback. The direct product URL is resolved lazily (via the
             # immersive product API) for the deal that actually gets posted, so
             # we avoid an extra API call for every search result here.
             retailer_url = resolve_item_url(item, use_immersive=False)
-            discount = self._parse_discount(item)
-            deal_score = self._calculate_deal_score(current_price, discount)
-            confidence = self._calculate_confidence(query, product_name, current_price)
 
             deal = DealResult(
                 id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
                 specialist=self.metadata.name,
                 product_name=product_name,
                 current_price=current_price,
-                historical_lowest_price=None,
+                historical_lowest_price=history.get(product_name),
                 discount_percent=discount,
                 store=store,
-                store_reputation="Trusted",
+                store_reputation=breakdown.reputation,
                 platform=self._detect_platform(item),
                 drm=None,
                 region_lock=None,
                 bundle_included=False,
                 url=retailer_url or "",
                 retailer_url=retailer_url,
-                deal_score=deal_score,
-                confidence_score=confidence,
+                deal_score=breakdown.deal_score,
+                confidence_score=breakdown.confidence_score,
                 timestamp=datetime.now(timezone.utc),
                 metadata={
                     "immersive_token": item.get("immersive_product_page_token"),
                     "source": store,
                 },
+                score_reasons=breakdown.reasons,
             )
 
             deal_results.append(deal)
-            scores.append(deal_score)
 
         return sorted(deal_results, key=lambda deal: deal.deal_score, reverse=True)
-
-    def _parse_price(self, price_value: Any) -> Optional[float]:
-        if price_value is None:
-            return None
-
-        try:
-            return float(str(price_value).replace("$", "").replace(",", ""))
-        except (ValueError, TypeError):
-            return None
 
     def _parse_discount(self, item: Dict[str, Any]) -> Optional[float]:
         discount = item.get("discount") or item.get("savings")
@@ -119,17 +131,6 @@ class Merchant(BaseAgent):
             return float(discount)
         except (ValueError, TypeError):
             return None
-
-    def _calculate_deal_score(self, price: float, discount: Optional[float]) -> float:
-        price_score = max(0.0, min(1.0, 500 / (price + 1)))
-        discount_score = max(0.0, min(1.0, (discount or 0.0) / 100))
-        return round((price_score * 0.6) + (discount_score * 0.4), 3)
-
-    def _calculate_confidence(self, query: str, title: str, price: float) -> float:
-        relevance = matches_search(query, title)
-        normalized_relevance = min(max(relevance / max(len(query.split()), 1), 0.0), 1.0)
-        price_score = max(0.0, min(1.0, 500 / (price + 1)))
-        return round((normalized_relevance * 0.7) + (price_score * 0.3), 3)
 
     def _detect_platform(self, item: Dict[str, Any]) -> Optional[str]:
         title = str(item.get("title", "")).lower()

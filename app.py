@@ -109,9 +109,13 @@ def run():
         print("-" * 60)
         print(f"🎮 Product: {product_name}")
         print(f"💰 Price: ${best_price:.2f}")
-        print(f"🏬 Store: {best.get('store', 'Unknown')}")
+        print(f"🏬 Store: {best.get('store', 'Unknown')} ({best.get('store_reputation', 'unknown')})")
         print(f"🤖 AI Rating: {ai_rating}")
+        print(f"📊 Deal Score: {best.get('deal_score')}  🎯 Confidence: {best.get('confidence_score')}")
         print(f"🔗 Direct link: {direct_url}")
+
+        for reason in best.get("score_reasons", []):
+            print(f"   • {reason}")
 
         price_note = ""
 

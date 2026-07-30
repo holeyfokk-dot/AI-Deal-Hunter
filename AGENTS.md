@@ -32,6 +32,17 @@ The genuine core (agent auto-discovery, `AgentManager.route("search", ...)`, and
 single external HTTP boundary `search_api.google_shopping_search` (also imported by name in
 `tools/search_tool.py`, so patch it in both). Run harness scripts with `PYTHONPATH=/workspace`.
 
+### Deal scoring
+`tools/deal_scoring.py` produces `deal_score`/`confidence_score` + `reasons`, used by
+`Merchant._build_deals`. It flags unrealistic prices (vs the median market average and
+last-seen price), penalizes third-party marketplace sellers, boosts the first-party
+retailers in `FIRST_PARTY_RETAILERS`, excludes accessories (`is_accessory`), and penalizes
+refurbished/open-box/used/parts-only/damaged listings unless the query asks for them.
+Reasons are stored in `DealResult.score_reasons` and shown in the Discord embed / console.
+Caveat: the market average is a plain median of the result set, so categories polluted by
+bundles/prebuilt-PC listings (e.g. a CPU query returning full PCs) can inflate the average;
+relevance filtering of mixed listings is out of scope of the scoring change.
+
 ### Deal URLs (direct retailer links)
 Deal alerts must link to the retailer's product page, never a Google Shopping URL.
 - `tools/retailer_url.py` resolves URLs: a direct (non-Google) link on the item →

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from .base_result import BaseResult
 
@@ -25,6 +25,9 @@ class DealResult(BaseResult):
     # Shopping URL. Falls back to the retailer's homepage when no direct product
     # link is available.
     retailer_url: Optional[str] = None
+    # Human-readable signals explaining the deal_score / confidence_score
+    # (e.g. "genuine discount vs market avg", "third-party marketplace seller").
+    score_reasons: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         base = super().to_dict()
@@ -42,5 +45,6 @@ class DealResult(BaseResult):
             "url": self.url,
             "retailer_url": self.retailer_url,
             "deal_score": self.deal_score,
+            "score_reasons": list(self.score_reasons),
         })
         return base
