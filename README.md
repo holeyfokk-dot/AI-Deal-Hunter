@@ -129,6 +129,26 @@ act workflow_dispatch -W .github/workflows/deal-hunter.yml \
   -s SERPAPI_KEY="$SERPAPI_KEY" -s DISCORD_TOKEN="$DISCORD_TOKEN" -s CHANNEL_ID="$CHANNEL_ID"
 ```
 
+## Product relevance & grouping (runs before scoring)
+
+Before anything is scored, `tools/product_relevance.py` classifies each listing
+and rejects apples-to-oranges matches so deals are only compared like-for-like:
+
+- **Product-type classification** — CPU / GPU / CONSOLE / ACCESSORY / PREBUILT_PC.
+- **Rejections before scoring** — a CPU/GPU query never matches a full prebuilt
+  PC; a console query never matches a controller; a `RTX 5070` query never
+  matches an `RTX 5090` or `5070 Ti`; a `PlayStation 5` query never matches a
+  `PS5 Pro`; a `Switch 2` query never matches the original `Switch`.
+- **Bundle detection** — bundles/combos (console + game, CPU + motherboard) are
+  put in a separate group and scored against other bundles, not standalone units.
+- **Semantic similarity** — a lightweight, dependency-free bag-of-words cosine
+  (`semantic_similarity`) plus exact model/variant token matching decides whether
+  two titles refer to the same primary product. (A heavier sentence-embedding
+  model could be dropped into `semantic_similarity` later.)
+- **Per-group market average** — the median used by the scorer is computed only
+  within a product group, so a $1,500 prebuilt no longer inflates a CPU's
+  "market average".
+
 ## Deal scoring (false-positive reduction)
 
 Deals are ranked by `tools/deal_scoring.py`, which combines several signals into a

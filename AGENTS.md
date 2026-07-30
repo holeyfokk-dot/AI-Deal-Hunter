@@ -32,6 +32,19 @@ The genuine core (agent auto-discovery, `AgentManager.route("search", ...)`, and
 single external HTTP boundary `search_api.google_shopping_search` (also imported by name in
 `tools/search_tool.py`, so patch it in both). Run harness scripts with `PYTHONPATH=/workspace`.
 
+### Product relevance / grouping (before scoring)
+`tools/product_relevance.py` runs before scoring in `Merchant._build_deals`:
+`group_results(query, items)` classifies each listing (`classify_product_type`:
+CPU/GPU/CONSOLE/ACCESSORY/PREBUILT_PC), rejects unrelated listings (full PCs for a
+CPU/GPU query, controllers for a console query, wrong model/variant via
+`same_primary_product`), detects bundles (`is_bundle`) into a separate group, and the
+scorer's market average is then computed per group. Semantic matching is a dependency-free
+token-cosine (`semantic_similarity`) plus required model tokens (5070, 7800x3d, the "2" in
+Switch 2) and differentiating modifiers (pro/ti/super/...); a real embedding model could be
+swapped into `semantic_similarity` without changing callers. Caveat: the median market
+average can still be inflated by scalper listings (no MSRP database yet), so a legit unit may
+show a large "discount" vs an inflated median.
+
 ### Deal scoring
 `tools/deal_scoring.py` produces `deal_score`/`confidence_score` + `reasons`, used by
 `Merchant._build_deals`. It flags unrealistic prices (vs the median market average and
@@ -39,9 +52,8 @@ last-seen price), penalizes third-party marketplace sellers, boosts the first-pa
 retailers in `FIRST_PARTY_RETAILERS`, excludes accessories (`is_accessory`), and penalizes
 refurbished/open-box/used/parts-only/damaged listings unless the query asks for them.
 Reasons are stored in `DealResult.score_reasons` and shown in the Discord embed / console.
-Caveat: the market average is a plain median of the result set, so categories polluted by
-bundles/prebuilt-PC listings (e.g. a CPU query returning full PCs) can inflate the average;
-relevance filtering of mixed listings is out of scope of the scoring change.
+The market average is a median computed per relevance group (see below), so mixed listing
+types (full PCs, wrong variants) no longer skew it; scalper-inflated medians can still remain.
 
 ### Deal URLs (direct retailer links)
 Deal alerts must link to the retailer's product page, never a Google Shopping URL.

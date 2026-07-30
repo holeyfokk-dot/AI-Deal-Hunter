@@ -8,6 +8,7 @@ from models.deal_result import DealResult
 from models.result_status import ResultStatus
 from price_history import load_prices
 from tools.deal_scoring import market_average, parse_price, score_item
+from tools.product_relevance import classify_product_type, group_results
 from tools.retailer_url import resolve_item_url
 from tools.search_tool import SearchTool
 
@@ -51,72 +52,88 @@ class Merchant(BaseAgent):
         }
 
     def _build_deals(self, query: str, items: List[Dict[str, Any]]) -> List[DealResult]:
-        # Market average (median) across the result set, used to flag
-        # unrealistic prices and quantify genuine discounts.
-        prices = [
-            price
-            for price in (parse_price(item.get("price", item.get("extracted_price"))) for item in items)
-            if price is not None
-        ]
-        market_avg = market_average(prices)
         history = load_prices()
+
+        # Group by product type first, and reject unrelated listings (full PCs
+        # for a CPU/GPU query, controllers for a console query, wrong models,
+        # etc.) BEFORE scoring. Bundles are grouped separately.
+        groups, _rejected = group_results(query, items)
 
         deal_results: List[DealResult] = []
 
-        for item in items:
-            current_price = parse_price(item.get("price", item.get("extracted_price")))
-            if current_price is None:
-                continue
+        for group_name, group_items in groups.items():
+            # Market average (median) is computed within the like-for-like group.
+            group_prices = [
+                price
+                for price in (
+                    parse_price(item.get("price", item.get("extracted_price")))
+                    for item in group_items
+                )
+                if price is not None
+            ]
+            group_avg = market_average(group_prices)
+            group_size = len(group_items)
 
-            product_name = item.get("title", "Unknown")
-            store = item.get("source", "Unknown")
+            for item in group_items:
+                current_price = parse_price(item.get("price", item.get("extracted_price")))
+                if current_price is None:
+                    continue
 
-            breakdown = score_item(
-                item,
-                query,
-                market_avg,
-                historical_price=history.get(product_name),
-            )
+                product_name = item.get("title", "Unknown")
+                store = item.get("source", "Unknown")
 
-            # Requirement 4: ignore accessories / non-main-product listings.
-            if breakdown.excluded:
-                continue
+                breakdown = score_item(
+                    item,
+                    query,
+                    group_avg,
+                    historical_price=history.get(product_name),
+                )
 
-            discount = self._parse_discount(item)
+                if breakdown.excluded:
+                    continue
 
-            # Never store a Google Shopping URL. Use a direct retailer link when
-            # already present, otherwise the retailer homepage as a cheap
-            # fallback. The direct product URL is resolved lazily (via the
-            # immersive product API) for the deal that actually gets posted, so
-            # we avoid an extra API call for every search result here.
-            retailer_url = resolve_item_url(item, use_immersive=False)
+                discount = self._parse_discount(item)
 
-            deal = DealResult(
-                id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
-                specialist=self.metadata.name,
-                product_name=product_name,
-                current_price=current_price,
-                historical_lowest_price=history.get(product_name),
-                discount_percent=discount,
-                store=store,
-                store_reputation=breakdown.reputation,
-                platform=self._detect_platform(item),
-                drm=None,
-                region_lock=None,
-                bundle_included=False,
-                url=retailer_url or "",
-                retailer_url=retailer_url,
-                deal_score=breakdown.deal_score,
-                confidence_score=breakdown.confidence_score,
-                timestamp=datetime.now(timezone.utc),
-                metadata={
-                    "immersive_token": item.get("immersive_product_page_token"),
-                    "source": store,
-                },
-                score_reasons=breakdown.reasons,
-            )
+                # Never store a Google Shopping URL. Use a direct retailer link
+                # when already present, otherwise the retailer homepage as a
+                # cheap fallback. The direct product URL is resolved lazily (via
+                # the immersive product API) for the deal that actually gets
+                # posted, so we avoid an extra API call for every search result.
+                retailer_url = resolve_item_url(item, use_immersive=False)
 
-            deal_results.append(deal)
+                reasons = [
+                    f"[+] Matched product group '{group_name}' "
+                    f"(compared against {group_size} like-for-like listing(s))"
+                ] + breakdown.reasons
+
+                deal = DealResult(
+                    id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
+                    specialist=self.metadata.name,
+                    product_name=product_name,
+                    current_price=current_price,
+                    historical_lowest_price=history.get(product_name),
+                    discount_percent=discount,
+                    store=store,
+                    store_reputation=breakdown.reputation,
+                    platform=self._detect_platform(item),
+                    drm=None,
+                    region_lock=None,
+                    bundle_included=group_name.endswith("_bundle"),
+                    url=retailer_url or "",
+                    retailer_url=retailer_url,
+                    deal_score=breakdown.deal_score,
+                    confidence_score=breakdown.confidence_score,
+                    timestamp=datetime.now(timezone.utc),
+                    metadata={
+                        "immersive_token": item.get("immersive_product_page_token"),
+                        "source": store,
+                        "product_type": classify_product_type(product_name).value,
+                        "product_group": group_name,
+                    },
+                    score_reasons=reasons,
+                )
+
+                deal_results.append(deal)
 
         return sorted(deal_results, key=lambda deal: deal.deal_score, reverse=True)
 
