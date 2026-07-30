@@ -129,11 +129,19 @@ act workflow_dispatch -W .github/workflows/deal-hunter.yml \
   -s SERPAPI_KEY="$SERPAPI_KEY" -s DISCORD_TOKEN="$DISCORD_TOKEN" -s CHANNEL_ID="$CHANNEL_ID"
 ```
 
-## Known issue
+## Direct retailer links
 
-`app.run()` reads `title`/`price` from search results, but the `Merchant` agent
-emits serialized `DealResult` dicts keyed `product_name`/`current_price`. As a
-result the `main.py` watchlist scan currently prints "No matching products
-found" even when live results are returned. The bot still connects and posts its
-startup message, and the Merchant agent scores deals correctly when invoked
-directly. This is a pre-existing app bug, tracked separately from the automation.
+Deal alerts link **straight to the retailer's product page** (Amazon, Best Buy,
+Walmart, Target, Costco, Newegg, etc.) — never a Google Shopping search URL.
+
+- SerpAPI's basic Google Shopping results only expose a Google Shopping
+  `product_link`. The direct retailer URL is resolved via SerpAPI's
+  `google_immersive_product` API (`tools/retailer_url.py`), which returns each
+  store's real product link.
+- To keep API usage low, the direct product URL is resolved for the **deal that
+  actually gets posted** (one immersive lookup per watchlist item). Other deals
+  carry the retailer's homepage as a non-Google fallback.
+- If a direct product URL can't be found, the retailer's official website is used
+  instead of Google Shopping (see `RETAILER_HOMEPAGES`).
+- The direct URL is stored on the deal object (`DealResult.retailer_url`) and the
+  Discord embed's **"Buy Now"** button links to it.

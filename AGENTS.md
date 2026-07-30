@@ -32,11 +32,24 @@ The genuine core (agent auto-discovery, `AgentManager.route("search", ...)`, and
 single external HTTP boundary `search_api.google_shopping_search` (also imported by name in
 `tools/search_tool.py`, so patch it in both). Run harness scripts with `PYTHONPATH=/workspace`.
 
-### Known app-level gotcha (not an environment issue)
-`app.run()` reads `item["title"]`/`item["price"]`, but `Merchant` emits serialized
-`DealResult` dicts keyed `product_name`/`current_price`. So the `main.py` → Merchant path
-prints "No matching products found" even with valid results. The correctly-working deal
-scoring is observed by inspecting `Merchant.handle()` / `AgentManager.route()` output directly.
+### Deal URLs (direct retailer links)
+Deal alerts must link to the retailer's product page, never a Google Shopping URL.
+- `tools/retailer_url.py` resolves URLs: a direct (non-Google) link on the item →
+  the `google_immersive_product` API's store link (`product_results.stores[].link`) →
+  the retailer homepage (`RETAILER_HOMEPAGES`) as a non-Google fallback.
+- Cost control: the immersive lookup runs only for the **posted** best deal
+  (`app.resolve_direct_url`), not for every search result. `Merchant` sets the cheap
+  homepage fallback (`resolve_item_url(..., use_immersive=False)`) and stashes the
+  `immersive_product_page_token` in `DealResult.metadata` for later resolution.
+- The direct URL lives in `DealResult.retailer_url`; `discord_bot.send_deal()` posts an
+  embed whose "Buy Now" button links to it.
+
+### Note on `app.run()` (previously broken, now fixed)
+`app.run()` used to read `title`/`price` while `Merchant` emitted
+`product_name`/`current_price`, so the scan always printed "No matching products found".
+It now consumes the `DealResult` schema directly, finds a best deal, and posts it.
+`main.py` remains interactive (`input()`), so CI/non-interactive runs still use
+`echo "" | python main.py`.
 
 ### CI automation
 `.github/workflows/deal-hunter.yml` runs `main.py` end-to-end on push to `main`,

@@ -7,6 +7,7 @@ from agents.base_agent import AgentMetadata, BaseAgent
 from ai import matches_search
 from models.deal_result import DealResult
 from models.result_status import ResultStatus
+from tools.retailer_url import resolve_item_url
 from tools.search_tool import SearchTool
 
 
@@ -59,13 +60,18 @@ class Merchant(BaseAgent):
 
             product_name = item.get("title", "Unknown")
             store = item.get("source", "Unknown")
-            url = item.get("product_link", "")
+            # Never store a Google Shopping URL. Use a direct retailer link when
+            # already present, otherwise the retailer homepage as a cheap
+            # fallback. The direct product URL is resolved lazily (via the
+            # immersive product API) for the deal that actually gets posted, so
+            # we avoid an extra API call for every search result here.
+            retailer_url = resolve_item_url(item, use_immersive=False)
             discount = self._parse_discount(item)
             deal_score = self._calculate_deal_score(current_price, discount)
             confidence = self._calculate_confidence(query, product_name, current_price)
 
             deal = DealResult(
-                id=url or f"deal-{len(deal_results) + 1}",
+                id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
                 specialist=self.metadata.name,
                 product_name=product_name,
                 current_price=current_price,
@@ -77,10 +83,15 @@ class Merchant(BaseAgent):
                 drm=None,
                 region_lock=None,
                 bundle_included=False,
-                url=url,
+                url=retailer_url or "",
+                retailer_url=retailer_url,
                 deal_score=deal_score,
                 confidence_score=confidence,
                 timestamp=datetime.now(timezone.utc),
+                metadata={
+                    "immersive_token": item.get("immersive_product_page_token"),
+                    "source": store,
+                },
             )
 
             deal_results.append(deal)
