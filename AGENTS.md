@@ -37,3 +37,16 @@ single external HTTP boundary `search_api.google_shopping_search` (also imported
 `DealResult` dicts keyed `product_name`/`current_price`. So the `main.py` → Merchant path
 prints "No matching products found" even with valid results. The correctly-working deal
 scoring is observed by inspecting `Merchant.handle()` / `AgentManager.route()` output directly.
+
+### CI automation
+`.github/workflows/deal-hunter.yml` runs `main.py` end-to-end on push to `main`,
+`workflow_dispatch`, and a daily `13:00 UTC` cron. Non-obvious points:
+- `main.py` calls `input()` for an optional ZIP/city, so CI runs it as
+  `echo "" | python main.py` to avoid an `EOFError` on empty stdin.
+- Secrets (`SERPAPI_KEY`, `DISCORD_TOKEN`, `CHANNEL_ID`) are injected as env vars from
+  GitHub Actions secrets; a preflight step fails the job with a clear message (not a
+  Python traceback) if any are missing. They are never committed (`.env` is git-ignored).
+- The Discord client runs in a daemon thread, so the process exits cleanly once the
+  watchlist scan finishes; the job also has a 10-minute timeout as a safety net.
+- Real runs consume SerpAPI credits and post to the live Discord channel — every push to
+  `main` and every daily cron triggers a real run.

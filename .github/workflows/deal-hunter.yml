@@ -1,0 +1,84 @@
+name: AI Deal Hunter
+
+# Runs the AI Deal Hunter bot pipeline (main.py) end-to-end.
+on:
+  # 1) Every push to the main branch.
+  push:
+    branches: [main]
+  # 2) Manual trigger from the Actions tab.
+  workflow_dispatch:
+  # 3) Daily schedule (13:00 UTC). Cron is always evaluated in UTC.
+  schedule:
+    - cron: "0 13 * * *"
+
+# Avoid overlapping bot runs stepping on each other.
+concurrency:
+  group: deal-hunter
+  cancel-in-progress: false
+
+jobs:
+  run-deal-hunter:
+    name: Run deal hunter pipeline
+    runs-on: ubuntu-latest
+    # Safety net so a hung Discord/SerpAPI call can never run forever.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          echo "::group::pip install"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          echo "::endgroup::"
+
+      # Fail gracefully (clear message, no Python traceback) if any secret
+      # is missing. Secrets come from repo/organization Actions secrets and
+      # are injected as environment variables only for this workflow run.
+      - name: Validate required secrets
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+        run: |
+          echo "Checking required secrets are configured..."
+          missing=0
+          for name in SERPAPI_KEY DISCORD_TOKEN CHANNEL_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing secret::Required secret '$name' is not set."
+              missing=1
+            else
+              echo "  [ok] $name is set"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::One or more required secrets are missing. Add them under" \
+                 "Settings -> Secrets and variables -> Actions (SERPAPI_KEY, DISCORD_TOKEN, CHANNEL_ID)."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # Run the real bot pipeline end-to-end. main.py prompts for an optional
+      # ZIP/city on stdin; an empty line is piped in so it runs non-interactively.
+      - name: Run AI Deal Hunter pipeline
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          LOG_LEVEL: INFO
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "::group::AI Deal Hunter run"
+          echo "Starting pipeline at $(date -u +'%Y-%m-%dT%H:%M:%SZ') ..."
+          echo "" | python main.py
+          echo "Pipeline completed successfully."
+          echo "::endgroup::"
