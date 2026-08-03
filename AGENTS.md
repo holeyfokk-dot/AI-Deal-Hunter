@@ -60,6 +60,18 @@ swapped into `semantic_similarity` without changing callers. Caveat: the median 
 average can still be inflated by scalper listings (no MSRP database yet), so a legit unit may
 show a large "discount" vs an inflated median.
 
+### Product page verification (behavioral, Phase 4.7)
+`tools/product_page_verify.py` fetches a candidate URL and confirms it sells the searched
+product before posting. `extract_product_signals` reads schema.org `Product` JSON-LD
+(name/brand/sku/gtin/mpn/offers), then `og:title`, then `<title>`; `verify_from_html`
+(no network, unit-tested) compares the name to the query via `same_primary_product` →
+`verified` / `mismatch` / `out_of_stock` / `unverified`. `app.run` tries candidates best-first
+(cap 3), rejects mismatches/out-of-stock, and falls back to an `unverified` link (with a note)
+only when pages can't be fetched — major retailers bot-block automated GETs, so a blocked
+fetch is `unverified`, never an auto-reject. Verified `gtin`/`mpn`/`sku` are stored in the deal
+metadata. `retailer_trust.trust_stars(source, status)` renders the ★ Seller Trust label.
+Note: verification adds network fetches at post time, so the pipeline is slower than before.
+
 ### Retailer Trust Engine
 `tools/retailer_trust.py` classifies stores into tiers 1-4 (`classify_tier`) and caps the
 deal score (`score_cap`: 1.0/0.9/0.65/0.45) and confidence (`confidence_cap`:

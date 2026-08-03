@@ -4,8 +4,16 @@ from manager import AgentManager
 from watchlist import load_watchlist
 from price_history import load_prices, has_price_changed
 from discord_bot import send_deal
-from tools.retailer_trust import rating_label
+from tools.retailer_trust import rating_label, trust_stars
 from tools.retailer_url import fetch_direct_url, is_valid_product_url
+from tools.product_page_verify import (
+    MISMATCH,
+    OUT_OF_STOCK,
+    UNVERIFIED,
+    VERIFIED,
+    PageVerification,
+    verify_product_page,
+)
 
 
 def get_price(deal):
@@ -89,23 +97,58 @@ def run():
             print("No matching products found.\n")
             continue
 
-        matching.sort(key=lambda pair: pair[0])
-        lowest_price = matching[0][0]
+        lowest_price = min(price for price, _ in matching)
 
-        best = max(matching, key=lambda pair: pair[1].get("deal_score", 0))[1]
+        # Behaviorally verify candidates (best-first) before posting: fetch the
+        # page and confirm it actually sells the searched product. Reject
+        # mismatches / out-of-stock; fall back to an unverifiable-but-structural
+        # link only if nothing verifies.
+        ranked = [deal for _, deal in sorted(matching, key=lambda pair: pair[1].get("deal_score", 0), reverse=True)]
+
+        best = None
+        direct_url = None
+        verification = None
+        fallback = None  # (deal, url, PageVerification) for a bot-blocked page
+        for candidate in ranked[:3]:
+            url = resolve_direct_url(candidate)
+            if not is_valid_product_url(url):
+                result = PageVerification(UNVERIFIED, reason="Link is a homepage / not a product page")
+            else:
+                result = verify_product_page(url, search, want_out_of_stock=False)
+
+            if result.status == VERIFIED:
+                best, direct_url, verification = candidate, url, result
+                break
+            if result.status in (MISMATCH, OUT_OF_STOCK):
+                print(f"   ✗ Rejected {candidate.get('store')}: {result.reason}")
+                continue
+            if fallback is None:
+                fallback = (candidate, url, result)
+
+        if best is None and fallback is not None:
+            best, direct_url, verification = fallback
+
+        if best is None:
+            print("No verified product page found for this search.\n")
+            continue
+
+        best["retailer_url"] = direct_url
+        best["url"] = direct_url
+        verified = verification.status == VERIFIED
         best_price = get_price(best)
         product_name = best.get("product_name", "Unknown")
 
-        # Resolve the direct retailer product URL for the deal we post, then
-        # strip tracking + structurally verify it before posting.
-        direct_url = resolve_direct_url(best)
-        best["retailer_url"] = direct_url
-        best["url"] = direct_url
-        verified = is_valid_product_url(direct_url)
-        if not verified:
-            best.setdefault("score_reasons", []).append(
-                "[warn] Link is a store homepage / unverified product page - verify before buying"
-            )
+        best.setdefault("metadata", {})
+        best["metadata"]["verification"] = verification.status
+        if verification.identifiers:
+            best["metadata"]["verified_identifiers"] = verification.identifiers
+        stars = trust_stars(best.get("store"), verification.status)
+        best["metadata"]["trust_stars"] = stars
+
+        if verified:
+            best.setdefault("score_reasons", []).insert(0, f"[+] Verified product page - {verification.reason}")
+        else:
+            best.setdefault("score_reasons", []).append(f"[warn] {verification.reason} - verify before buying")
 
         old_price = load_prices().get(product_name)
         changed = has_price_changed(product_name, best_price)
@@ -117,11 +160,11 @@ def run():
         print("-" * 60)
         print(f"🎮 Product: {product_name}")
         print(f"💰 Price: ${best_price:.2f}")
-        print(f"🏬 Store: {best.get('store', 'Unknown')} ({best.get('store_reputation', 'unknown')})")
+        print(f"🏬 Store: {best.get('store', 'Unknown')}  {stars}")
         print(f"🤖 AI Rating: {ai_rating}")
         print(f"📊 Deal Score: {best.get('deal_score')}  🎯 Confidence: {best.get('confidence_score')}")
         print(f"🔗 Direct link: {direct_url}")
-        print(f"   {'✅ Verified product page' if verified else '⚠️ Unverified link (homepage / not a product page)'}")
+        print(f"   {'✅ Verified: ' + (verification.title or '')[:60] if verified else '⚠️ ' + verification.reason}")
 
         for reason in best.get("score_reasons", []):
             print(f"   • {reason}")

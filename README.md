@@ -181,6 +181,31 @@ Discord embed.
 > the title; the fingerprint accepts explicit identifier fields for when a richer
 > data source is added.
 
+## Product page verification (behavioral)
+
+Structural checks prove a link *looks* like a product page; `tools/product_page_verify.py`
+goes further and confirms the page actually sells the searched product. Before a
+deal is posted, the bot fetches the candidate page and extracts (most reliable
+first):
+
+1. schema.org `Product` **JSON-LD** (`name`, `brand`, `sku`, `gtin`, `mpn`,
+   `offers.price`, `offers.availability`);
+2. the **OpenGraph** `og:title`;
+3. the `<title>` tag / meta description.
+
+The extracted name is matched against the query, so a page that is really an
+`RTX 4070 Super` is **rejected** for an `RTX 5070` search, and a `PS5 Slim` is
+rejected for a `PS5 Pro` search. Out-of-stock pages are skipped unless stock
+alerts are requested. Candidates are tried best-first; a mismatch is rejected and
+the next candidate is verified. If a page can't be fetched (major retailers
+bot-block automated requests) the deal is posted as `unverified` with a note
+rather than being wrongly dropped. Any `gtin`/`mpn`/`sku` found on the verified
+page is also captured (feeding the product fingerprint).
+
+Seller trust is shown as stars (`trust_stars`): `★★★★★ Verified`,
+`★★★★☆ Known retailer`, `★★★☆☆ Limited history`, `★★☆☆☆ Unknown`,
+`★☆☆☆☆ High Risk` (a page/product mismatch drops any seller to High Risk).
+
 ## Retailer Trust Engine
 
 `tools/retailer_trust.py` classifies every store into a trust tier and caps how

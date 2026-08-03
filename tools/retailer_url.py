@@ -13,7 +13,8 @@ TRACKING_PARAMS = {
     "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "rsrtlid", "srsltid",
     "ref", "referrer", "affiliate", "aff", "tag", "tracking", "mc_cid",
     "mc_eid", "igshid", "cn", "veh", "irgwc", "irclickid", "_branch_match_id",
-    "utm_id", "yclid", "twclid", "ttclid",
+    "utm_id", "yclid", "twclid", "ttclid", "source", "campaign", "session",
+    "sessionid", "sid",
 }
 
 # Path fragments that indicate a non-product (search / listing) page.

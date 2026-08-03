@@ -83,6 +83,28 @@ def is_trusted(source: Optional[str]) -> bool:
     return classify_tier(source) <= 2
 
 
+def trust_stars(source: Optional[str], verification_status: Optional[str] = None) -> str:
+    """A star rating that's easier to scan than a numeric confidence.
+
+    ★★★★★ Verified · ★★★★ Known retailer · ★★★ Limited history ·
+    ★★ Unknown · ★ High Risk. A verified product page upgrades a Tier 1 seller
+    to five stars; a page/product mismatch drops any seller to High Risk.
+    """
+    if verification_status == "mismatch":
+        return "★☆☆☆☆ High Risk"
+
+    tier = classify_tier(source)
+    if tier == 1:
+        if verification_status == "verified":
+            return "★★★★★ Verified"
+        return "★★★★☆ Known retailer"
+    if tier == 2:
+        return "★★★★☆ Known retailer"
+    if tier == 3:
+        return "★★★☆☆ Limited history"
+    return "★★☆☆☆ Unknown"
+
+
 def rating_label(deal_score: float, source: Optional[str]) -> str:
     """Human rating that respects trust: untrusted stores never say "Amazing".
 
