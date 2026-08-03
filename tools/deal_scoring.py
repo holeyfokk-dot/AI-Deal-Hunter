@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ai import matches_search
+from tools.retailer_trust import classify_tier, confidence_cap, score_cap, tier_name
 
 # Requirement 3: prefer these first-party retailers.
 FIRST_PARTY_RETAILERS = (
@@ -115,8 +116,17 @@ CONDITION_KEYWORDS = {
 UNREALISTIC_RATIO = 0.4
 
 REP_FIRST_PARTY = "first_party"
+REP_SPECIALTY = "specialty"
 REP_MARKETPLACE = "marketplace"
 REP_UNKNOWN = "unknown"
+
+# Map trust tier (retailer_trust) -> reputation label used on deals.
+_TIER_REPUTATION = {
+    1: REP_FIRST_PARTY,
+    2: REP_SPECIALTY,
+    3: REP_MARKETPLACE,
+    4: REP_UNKNOWN,
+}
 
 
 @dataclass
@@ -200,7 +210,8 @@ def score_item(
     price = parse_price(item.get("price", item.get("extracted_price")))
     reasons: List[str] = []
 
-    reputation = classify_retailer(source)
+    tier = classify_tier(source)
+    reputation = _TIER_REPUTATION[tier]
 
     # Requirement 4: ignore accessories / non-main-product listings.
     if is_accessory(title):
@@ -267,19 +278,23 @@ def score_item(
     if relevance_norm >= 0.75:
         reasons.append("[+] Strong title match to your search")
 
-    # Requirement 2 & 3: reputation.
-    if reputation == REP_FIRST_PARTY:
+    # Requirement 2 & 3: retailer trust tier (Retailer Trust Engine).
+    if tier == 1:
         deal_score += 0.15
         confidence += 0.2
-        reasons.append(f"[+] Sold by first-party retailer ({source})")
-    elif reputation == REP_MARKETPLACE:
+        reasons.append(f"[+] {tier_name(source)} - first-party trusted ({source})")
+    elif tier == 2:
+        deal_score += 0.05
+        confidence += 0.05
+        reasons.append(f"[+] {tier_name(source)} ({source})")
+    elif tier == 3:
         deal_score -= 0.25
-        confidence -= 0.15
-        reasons.append(f"[-] Third-party marketplace seller ({source}) - lower trust")
+        confidence -= 0.2
+        reasons.append(f"[-] {tier_name(source)} - lower trust ({source})")
     else:
         deal_score -= 0.1
-        confidence -= 0.1
-        reasons.append(f"[-] Unrecognized retailer ({source})")
+        confidence -= 0.2
+        reasons.append(f"[-] {tier_name(source)} - unverified, treat with caution ({source})")
 
     if unrealistic:
         confidence -= 0.45
@@ -311,8 +326,23 @@ def score_item(
     if ratio is not None and 0.7 <= ratio <= 1.05:
         confidence += 0.1  # a believable, near-market price
 
-    deal_score = round(min(max(deal_score, 0.0), 1.0), 3)
-    confidence = round(min(max(confidence, 0.0), 1.0), 3)
+    deal_score = min(max(deal_score, 0.0), 1.0)
+    confidence = min(max(confidence, 0.0), 1.0)
+
+    # Trust caps: a cheap-but-sketchy seller can never look like a top deal, and
+    # an unknown store can never reach high confidence (fixes unknown retailers
+    # ranking as "Amazing Deal" with 0.9 score / 0.7 confidence).
+    cap = score_cap(source)
+    if deal_score > cap:
+        deal_score = cap
+        reasons.append(f"[-] Deal score capped at {cap:.2f} ({tier_name(source).lower()})")
+    conf_cap = confidence_cap(source)
+    if confidence > conf_cap:
+        confidence = conf_cap
+        reasons.append(f"[-] Confidence capped at {conf_cap:.2f} ({tier_name(source).lower()})")
+
+    deal_score = round(deal_score, 3)
+    confidence = round(confidence, 3)
 
     return ScoreBreakdown(
         deal_score=deal_score,

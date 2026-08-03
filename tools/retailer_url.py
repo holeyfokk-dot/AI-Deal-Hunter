@@ -2,9 +2,59 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from config import logger
+
+# Query parameters that are pure click/affiliate tracking and should be stripped
+# from any URL before it is posted.
+TRACKING_PARAMS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "rsrtlid", "srsltid",
+    "ref", "referrer", "affiliate", "aff", "tag", "tracking", "mc_cid",
+    "mc_eid", "igshid", "cn", "veh", "irgwc", "irclickid", "_branch_match_id",
+    "utm_id", "yclid", "twclid", "ttclid",
+}
+
+# Path fragments that indicate a non-product (search / listing) page.
+_SEARCH_PATH_MARKERS = ("/search", "/s?", "/results", "/sch/", "/browse")
+
+
+def strip_tracking(url: Optional[str]) -> Optional[str]:
+    """Remove click/affiliate tracking query parameters from a URL."""
+    if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        return url
+    parts = urlparse(url)
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in TRACKING_PARAMS
+    ]
+    return urlunparse(parts._replace(query=urlencode(kept)))
+
+
+def is_valid_product_url(url: Optional[str]) -> bool:
+    """Structural check that a URL is a real retailer product page.
+
+    Verifies (without a network call, since major retailers bot-block automated
+    requests) that the URL is HTTPS, not Google, not a search page, and not a
+    bare homepage. Used to flag deals whose link needs manual verification.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    parts = urlparse(url)
+    if parts.scheme != "https":
+        return False
+    host = parts.netloc.lower()
+    if "google." in host or "shopping.google" in host:
+        return False
+    path = parts.path.rstrip("/")
+    if not path:  # bare homepage
+        return False
+    lowered = (parts.path + "?" + parts.query).lower()
+    if any(marker in lowered for marker in _SEARCH_PATH_MARKERS):
+        return False
+    return True
 
 # Known retailers -> official website. Used as a fallback when a direct
 # product URL cannot be resolved. We NEVER fall back to Google Shopping.
@@ -81,9 +131,9 @@ def _pick_store_link(stores: List[Dict[str, Any]], source: Optional[str]) -> Opt
         for cand in candidates:
             name = cand["name"].strip().lower()
             if name and (name in wanted or wanted in name):
-                return cand["link"]
+                return strip_tracking(cand["link"])
 
-    return candidates[0]["link"]
+    return strip_tracking(candidates[0]["link"])
 
 
 def fetch_direct_url(
@@ -136,7 +186,7 @@ def resolve_item_url(
     for key in ("direct_link", "link"):
         candidate = item.get(key)
         if candidate and not is_google_url(candidate):
-            return candidate
+            return strip_tracking(candidate)
 
     if use_immersive:
         direct = fetch_direct_url(

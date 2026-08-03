@@ -60,6 +60,17 @@ swapped into `semantic_similarity` without changing callers. Caveat: the median 
 average can still be inflated by scalper listings (no MSRP database yet), so a legit unit may
 show a large "discount" vs an inflated median.
 
+### Retailer Trust Engine
+`tools/retailer_trust.py` classifies stores into tiers 1-4 (`classify_tier`) and caps the
+deal score (`score_cap`: 1.0/0.9/0.65/0.45) and confidence (`confidence_cap`:
+1.0/0.85/0.5/0.3). `score_item` applies these caps, so an unknown store can't outrank a
+trusted one and can't reach "Amazing Deal". `rating_label(deal_score, source)` gives the
+trust-aware label used in the embed/console ("Needs Verification"/"Potential Deal" for
+untrusted). URLs are cleaned via `retailer_url.strip_tracking` (utm_*, gclid, srsltid, tag,
+ref, ...) and structurally checked via `retailer_url.is_valid_product_url` (https, not
+google/search/homepage). A live HTTP-200 check is intentionally NOT done because major
+retailers bot-block automated GETs (would false-reject valid links).
+
 ### Deal scoring
 `tools/deal_scoring.py` produces `deal_score`/`confidence_score` + `reasons`, used by
 `Merchant._build_deals`. It flags unrealistic prices (vs the median market average and

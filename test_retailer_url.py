@@ -4,9 +4,42 @@ from tools import retailer_url
 from tools.retailer_url import (
     homepage_for,
     is_google_url,
+    is_valid_product_url,
     resolve_item_url,
+    strip_tracking,
     _pick_store_link,
 )
+
+
+class TestStripTracking(unittest.TestCase):
+    def test_removes_tracking_params(self):
+        url = (
+            "https://www.newegg.com/p/N82E16814126758?item=N82E16814126758"
+            "&utm_source=google&utm_medium=organic&utm_campaign=knc&srsltid=AfmBOo&tag=aff1"
+        )
+        cleaned = strip_tracking(url)
+        self.assertIn("item=N82E16814126758", cleaned)
+        for junk in ("utm_source", "utm_medium", "utm_campaign", "srsltid", "tag="):
+            self.assertNotIn(junk, cleaned)
+
+    def test_keeps_functional_params_and_handles_no_query(self):
+        self.assertEqual(
+            strip_tracking("https://www.walmart.com/ip/123?selectedSellerId=0"),
+            "https://www.walmart.com/ip/123?selectedSellerId=0",
+        )
+        self.assertEqual(strip_tracking("https://x.com/p/1"), "https://x.com/p/1")
+
+
+class TestValidProductURL(unittest.TestCase):
+    def test_accepts_product_pages(self):
+        self.assertTrue(is_valid_product_url("https://www.walmart.com/ip/PS5/123"))
+        self.assertTrue(is_valid_product_url("https://www.bestbuy.com/site/x/6646420.p"))
+
+    def test_rejects_homepage_search_google_and_http(self):
+        self.assertFalse(is_valid_product_url("https://www.walmart.com"))          # homepage
+        self.assertFalse(is_valid_product_url("https://www.amazon.com/s?k=rtx"))   # search
+        self.assertFalse(is_valid_product_url("https://www.google.com/search?q=x"))  # google
+        self.assertFalse(is_valid_product_url("http://www.walmart.com/ip/123"))    # not https
 
 
 class TestIsGoogleURL(unittest.TestCase):

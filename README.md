@@ -181,6 +181,29 @@ Discord embed.
 > the title; the fingerprint accepts explicit identifier fields for when a richer
 > data source is added.
 
+## Retailer Trust Engine
+
+`tools/retailer_trust.py` classifies every store into a trust tier and caps how
+good a deal can look, so a cheap-but-sketchy listing can't outrank a trustworthy
+one (Best Buy $579 beats RandomShop123 $549):
+
+| Tier | Examples | Deal-score cap | Confidence cap |
+|------|----------|---------------:|---------------:|
+| 1 Preferred / first-party | Amazon, Best Buy, Walmart, Target, Costco, Newegg, Micro Center, B&H, GameStop, Sony, Nintendo, Apple | 1.00 | 1.00 |
+| 2 Known specialty | AAAWave, Antonline, Adorama, MemoryC, Provantage | 0.90 | 0.85 |
+| 3 Marketplace | eBay, AliExpress, Mercari, Temu, `Store - Seller` | 0.65 | 0.50 |
+| 4 Unknown | any never-seen store | 0.45 | 0.30 |
+
+- An **unknown store can never show "Amazing Deal"** — `rating_label()` returns
+  `⚠️ Needs Verification` (Tier 4) or `🟡 Potential Deal` (Tier 3); "🔥 Amazing
+  Deal" is reserved for Tier 1.
+- **URL tracking is stripped** (`strip_tracking`) — `utm_*`, `gclid`, `fbclid`,
+  `srsltid`, `ref`, `tag`, `aff`, etc. are removed before a link is posted.
+- **Structural URL verification** (`is_valid_product_url`) flags links that are a
+  homepage, a search page, non-HTTPS, or Google; the deal shows an "Unverified
+  link" note. (A live HTTP-200 check is intentionally skipped because major
+  retailers bot-block automated requests and would cause false rejections.)
+
 ## Deal scoring (false-positive reduction)
 
 Deals are ranked by `tools/deal_scoring.py`, which combines several signals into a

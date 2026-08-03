@@ -1,10 +1,11 @@
-from ai import score_deal, matches_search
+from ai import matches_search
 from config import logger
 from manager import AgentManager
 from watchlist import load_watchlist
 from price_history import load_prices, has_price_changed
 from discord_bot import send_deal
-from tools.retailer_url import fetch_direct_url
+from tools.retailer_trust import rating_label
+from tools.retailer_url import fetch_direct_url, is_valid_product_url
 
 
 def get_price(deal):
@@ -95,15 +96,22 @@ def run():
         best_price = get_price(best)
         product_name = best.get("product_name", "Unknown")
 
-        # Resolve the direct retailer product URL for the deal we post.
+        # Resolve the direct retailer product URL for the deal we post, then
+        # strip tracking + structurally verify it before posting.
         direct_url = resolve_direct_url(best)
         best["retailer_url"] = direct_url
         best["url"] = direct_url
+        verified = is_valid_product_url(direct_url)
+        if not verified:
+            best.setdefault("score_reasons", []).append(
+                "[warn] Link is a store homepage / unverified product page - verify before buying"
+            )
 
         old_price = load_prices().get(product_name)
         changed = has_price_changed(product_name, best_price)
 
-        ai_rating = score_deal(best_price)
+        # Trust-aware rating: untrusted sellers never show "Amazing Deal".
+        ai_rating = rating_label(best.get("deal_score", 0.0), best.get("store"))
 
         print("\n🏆 BEST DEAL")
         print("-" * 60)
@@ -113,6 +121,7 @@ def run():
         print(f"🤖 AI Rating: {ai_rating}")
         print(f"📊 Deal Score: {best.get('deal_score')}  🎯 Confidence: {best.get('confidence_score')}")
         print(f"🔗 Direct link: {direct_url}")
+        print(f"   {'✅ Verified product page' if verified else '⚠️ Unverified link (homepage / not a product page)'}")
 
         for reason in best.get("score_reasons", []):
             print(f"   • {reason}")
@@ -155,7 +164,7 @@ def run():
             print(f"💰 Price: ${price:.2f}")
             print(f"💸 ${price - lowest_price:.2f} above cheapest")
             print(f"🏬 Store: {item.get('store', 'Unknown')}")
-            print(f"🤖 AI Rating: {score_deal(price)}")
+            print(f"🤖 AI Rating: {rating_label(item.get('deal_score', 0.0), item.get('store'))}")
             print(f"🔗 Link: {item.get('retailer_url') or item.get('url') or 'No link'}")
             print("-" * 60)
 

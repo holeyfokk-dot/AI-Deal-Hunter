@@ -73,6 +73,12 @@ def _build_deal_embed(deal, ai_rating="", price_note=""):
         embed.add_field(name="💰 Price", value=f"${price:.2f}", inline=True)
     embed.add_field(name="🏪 Store", value=store, inline=True)
 
+    reputation = deal.get("store_reputation")
+    if reputation:
+        embed.add_field(
+            name="🏷️ Seller Trust", value=str(reputation).replace("_", " ").title(), inline=True
+        )
+
     if ai_rating:
         embed.add_field(name="🤖 AI Rating", value=ai_rating, inline=True)
 
