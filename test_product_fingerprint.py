@@ -23,8 +23,9 @@ class TestMPNExtraction(unittest.TestCase):
         )
 
     def test_ignores_specs_and_plain_titles(self):
-        # RAM speed / core-count specs must not be treated as part numbers.
+        # RAM speed / capacity / core-count specs must not be treated as part numbers.
         self.assertIsNone(extract_mpn_from_title("AMD Ryzen 7 7800X3D DDR5-6000 8-Core"))
+        self.assertIsNone(extract_mpn_from_title("Gaming PC Ryzen 7 7800X3D 8GB-32GB RAM"))
         self.assertIsNone(extract_mpn_from_title("ASUS TUF GeForce RTX 5070 OC Edition"))
         self.assertIsNone(extract_mpn_from_title("Pokemon Legends Z-a Bundle"))
 

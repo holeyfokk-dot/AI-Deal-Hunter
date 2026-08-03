@@ -41,6 +41,9 @@ _SPEC_PREFIXES = (
     "NVME", "MHZ", "GHZ", "RPM", "GBPS", "DP",
 )
 _SPEC_SUFFIX_RE = re.compile(r"^\d+-(CORE|BIT|PIN|WAY|PACK|ZONE|SLOT|INCH|KEY)$")
+# A number immediately followed by a unit (8GB-32GB, 6000MHZ, 120W) is a spec,
+# not a manufacturer part number.
+_UNIT_RE = re.compile(r"\d+(GB|TB|MB|KB|MHZ|GHZ|HZ|WATT|MM|CM|BIT|CORE|PIN)\b")
 
 
 def _looks_like_spec(token: str) -> bool:
@@ -49,6 +52,8 @@ def _looks_like_spec(token: str) -> bool:
     if lead and lead.group() in _SPEC_PREFIXES:
         return True
     if _SPEC_SUFFIX_RE.match(up):
+        return True
+    if _UNIT_RE.search(up):
         return True
     return False
 
