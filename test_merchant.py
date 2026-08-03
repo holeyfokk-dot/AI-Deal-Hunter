@@ -3,6 +3,7 @@ from datetime import datetime
 
 from agents.merchant import Merchant
 from models.deal_result import DealResult
+from tools.retailer_url import is_google_url
 
 
 class TestDealResult(unittest.TestCase):
@@ -20,7 +21,8 @@ class TestDealResult(unittest.TestCase):
             drm="Steam",
             region_lock=None,
             bundle_included=False,
-            url="https://example.com",
+            url="https://www.steampowered.com/app/1",
+            retailer_url="https://store.steampowered.com/app/1",
             deal_score=4.5,
             confidence_score=0.92,
             timestamp=datetime(2026, 7, 28, 12, 0, 0),
@@ -30,7 +32,8 @@ class TestDealResult(unittest.TestCase):
         self.assertEqual(serialized["product_name"], "Test Game")
         self.assertEqual(serialized["current_price"], 19.99)
         self.assertEqual(serialized["discount_percent"], 25.0)
-        self.assertEqual(serialized["url"], "https://example.com")
+        self.assertEqual(serialized["url"], "https://www.steampowered.com/app/1")
+        self.assertEqual(serialized["retailer_url"], "https://store.steampowered.com/app/1")
         self.assertEqual(serialized["timestamp"], "2026-07-28T12:00:00")
 
 
@@ -51,6 +54,9 @@ class TestMerchant(unittest.TestCase):
             self.assertIsInstance(deal.current_price, float)
             self.assertTrue(deal.deal_score >= 0)
             self.assertTrue(0.0 <= deal.confidence_score <= 1.0)
+            # URLs must never be Google Shopping links.
+            self.assertFalse(is_google_url(deal.url))
+            self.assertFalse(is_google_url(deal.retailer_url))
 
     def test_can_handle_search(self):
         merchant = Merchant()

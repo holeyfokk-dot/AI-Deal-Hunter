@@ -1,15 +1,25 @@
-from ai import score_deal, matches_search
+from ai import matches_search
 from config import logger
 from manager import AgentManager
 from watchlist import load_watchlist
 from price_history import load_prices, has_price_changed
-from discord_bot import send_message
+from discord_bot import send_deal
+from tools.retailer_trust import rating_label, trust_stars
+from tools.retailer_url import fetch_direct_url, is_valid_product_url
+from tools.product_page_verify import (
+    MISMATCH,
+    OUT_OF_STOCK,
+    UNVERIFIED,
+    VERIFIED,
+    PageVerification,
+    verify_product_page,
+)
 
 
-def get_price(item):
+def get_price(deal):
     try:
         return float(
-            str(item.get("price", "0"))
+            str(deal.get("current_price", deal.get("price", "inf")))
             .replace("$", "")
             .replace(",", "")
         )
@@ -32,6 +42,21 @@ def get_search_results(agent_manager: AgentManager, query: str):
     return results
 
 
+def resolve_direct_url(deal):
+    """Upgrade a deal's URL to a direct retailer product page (never Google).
+
+    Falls back to whatever non-Google URL the deal already carries (typically
+    the retailer's homepage) when a direct product link can't be resolved.
+    """
+    current = deal.get("retailer_url") or deal.get("url")
+    metadata = deal.get("metadata") or {}
+    token = metadata.get("immersive_token")
+    store = deal.get("store") or metadata.get("source")
+
+    direct = fetch_direct_url(token, store)
+    return direct or current
+
+
 def run():
     agent_manager = AgentManager()
     agent_manager.startup_summary()
@@ -48,102 +73,142 @@ def run():
         print(f"Searching: {search}")
         print("=" * 60)
 
-        shopping_results = get_search_results(agent_manager, search)
+        deals = get_search_results(agent_manager, search)
 
-        if not shopping_results:
+        if not deals:
             print("No products found.\n")
             continue
 
-        shopping_results = sorted(shopping_results, key=get_price)
+        matching = []
 
-        prices = []
-
-        for item in shopping_results:
-            price = get_price(item)
-
-            if price != float("inf"):
-                prices.append(price)
-
-        if not prices:
-            print("No valid prices.\n")
-            continue
-
-        lowest_price = min(prices)
-
-        best = None
-
-        for item in shopping_results:
-
-            if matches_search(search, item.get("title", "")) == 0:
+        for deal in deals:
+            if not isinstance(deal, dict):
                 continue
 
-            best = item
-            break
+            if matches_search(search, deal.get("product_name", "")) == 0:
+                continue
 
-        if best is None:
+            price = get_price(deal)
+
+            if price != float("inf"):
+                matching.append((price, deal))
+
+        if not matching:
             print("No matching products found.\n")
             continue
 
-        best_price = get_price(best)
-        product_name = best.get("title", "Unknown")
+        lowest_price = min(price for price, _ in matching)
 
-        prices_history = load_prices()
-        old_price = prices_history.get(product_name)
+        # Behaviorally verify candidates (best-first) before posting: fetch the
+        # page and confirm it actually sells the searched product. Reject
+        # mismatches / out-of-stock; fall back to an unverifiable-but-structural
+        # link only if nothing verifies.
+        ranked = [deal for _, deal in sorted(matching, key=lambda pair: pair[1].get("deal_score", 0), reverse=True)]
+
+        best = None
+        direct_url = None
+        verification = None
+        fallback = None  # (deal, url, PageVerification) for a bot-blocked page
+        for candidate in ranked[:3]:
+            url = resolve_direct_url(candidate)
+            if not is_valid_product_url(url):
+                result = PageVerification(UNVERIFIED, reason="Link is a homepage / not a product page")
+            else:
+                result = verify_product_page(url, search, want_out_of_stock=False)
+
+            if result.status == VERIFIED:
+                best, direct_url, verification = candidate, url, result
+                break
+            if result.status in (MISMATCH, OUT_OF_STOCK):
+                print(f"   ✗ Rejected {candidate.get('store')}: {result.reason}")
+                continue
+            if fallback is None:
+                fallback = (candidate, url, result)
+
+        if best is None and fallback is not None:
+            best, direct_url, verification = fallback
+
+        if best is None:
+            print("No verified product page found for this search.\n")
+            continue
+
+        best["retailer_url"] = direct_url
+        best["url"] = direct_url
+        verified = verification.status == VERIFIED
+        best_price = get_price(best)
+        product_name = best.get("product_name", "Unknown")
+
+        best.setdefault("metadata", {})
+        best["metadata"]["verification"] = verification.status
+        if verification.identifiers:
+            best["metadata"]["verified_identifiers"] = verification.identifiers
+        stars = trust_stars(best.get("store"), verification.status)
+        best["metadata"]["trust_stars"] = stars
+
+        if verified:
+            best.setdefault("score_reasons", []).insert(0, f"[+] Verified product page - {verification.reason}")
+        else:
+            best.setdefault("score_reasons", []).append(f"[warn] {verification.reason} - verify before buying")
+
+        old_price = load_prices().get(product_name)
         changed = has_price_changed(product_name, best_price)
+
+        # Trust-aware rating: untrusted sellers never show "Amazing Deal".
+        ai_rating = rating_label(best.get("deal_score", 0.0), best.get("store"))
 
         print("\n🏆 BEST DEAL")
         print("-" * 60)
         print(f"🎮 Product: {product_name}")
         print(f"💰 Price: ${best_price:.2f}")
-        print(f"🏬 Store: {best.get('source', 'Unknown')}")
-        print(f"🤖 AI Rating: {score_deal(best_price)}")
+        print(f"🏬 Store: {best.get('store', 'Unknown')}  {stars}")
+        print(f"🤖 AI Rating: {ai_rating}")
+        print(f"📊 Deal Score: {best.get('deal_score')}  🎯 Confidence: {best.get('confidence_score')}")
+        print(f"🔗 Direct link: {direct_url}")
+        print(f"   {'✅ Verified: ' + (verification.title or '')[:60] if verified else '⚠️ ' + verification.reason}")
+
+        for reason in best.get("score_reasons", []):
+            print(f"   • {reason}")
+
+        other_offers = (best.get("metadata") or {}).get("other_offers") or []
+        if other_offers:
+            print("   🛍️ Also available at:")
+            for offer in other_offers[:5]:
+                price_val = offer.get("price")
+                if isinstance(price_val, (int, float)):
+                    print(f"      - {offer.get('store', 'Unknown')}: ${price_val:.2f}")
+
+        price_note = ""
 
         if old_price is None:
-            print("🆕 First time seeing this product")
-
+            price_note = "🆕 First time seeing this product"
+            print(price_note)
         elif changed:
-
             difference = old_price - best_price
-
             if difference > 0:
-                print(f"📉 Price dropped ${difference:.2f}")
-
+                price_note = f"📉 Price dropped ${difference:.2f}"
             elif difference < 0:
-                print(f"📈 Price increased ${abs(difference):.2f}")
-
+                price_note = f"📈 Price increased ${abs(difference):.2f}"
+            if price_note:
+                print(price_note)
         else:
-            print("✅ Price unchanged")
-
-        message = f"""🔥 **{search} Deal Found!**
-
-🎮 Product: {product_name}
-💰 Price: ${best_price:.2f}
-🏪 Store: {best.get('source', 'Unknown')}
-🤖 AI Rating: {score_deal(best_price)}
-🔗 🔗 Link: {best.get('product_link', 'No link')}
-"""
+            price_note = "✅ Price unchanged"
+            print(price_note)
 
         print("📤 Sending Discord notification...")
-        send_message(message)
+        send_deal(best, ai_rating=ai_rating, price_note=price_note)
 
         print("\nTop Results")
         print("-" * 60)
 
         shown = 0
 
-        for item in shopping_results:
-
-            if matches_search(search, item.get("title", "")) == 0:
-                continue
-
-            price = get_price(item)
-
-            print(f"🎮 Product: {item.get('title')}")
+        for price, item in matching:
+            print(f"🎮 Product: {item.get('product_name')}")
             print(f"💰 Price: ${price:.2f}")
             print(f"💸 ${price - lowest_price:.2f} above cheapest")
-            print(f"🏬 Store: {item.get('source', 'Unknown')}")
-            print(f"🤖 AI Rating: {score_deal(price)}")
-            print(f"🔗 Link: {item.get('product_link', 'No link')}")
+            print(f"🏬 Store: {item.get('store', 'Unknown')}")
+            print(f"🤖 AI Rating: {rating_label(item.get('deal_score', 0.0), item.get('store'))}")
+            print(f"🔗 Link: {item.get('retailer_url') or item.get('url') or 'No link'}")
             print("-" * 60)
 
             shown += 1

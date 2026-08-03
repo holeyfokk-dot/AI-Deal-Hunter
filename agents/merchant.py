@@ -4,9 +4,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import AgentMetadata, BaseAgent
-from ai import matches_search
 from models.deal_result import DealResult
 from models.result_status import ResultStatus
+from price_history import load_prices
+from tools.deal_scoring import market_average, parse_price, score_item
+from tools.product_dedup import best_offer, consolidate_offers
+from tools.product_relevance import classify_product_type, group_results
+from tools.retailer_url import resolve_item_url
 from tools.search_tool import SearchTool
 
 
@@ -49,53 +53,107 @@ class Merchant(BaseAgent):
         }
 
     def _build_deals(self, query: str, items: List[Dict[str, Any]]) -> List[DealResult]:
+        history = load_prices()
+
+        # Group by product type first, and reject unrelated listings (full PCs
+        # for a CPU/GPU query, controllers for a console query, wrong models,
+        # etc.) BEFORE scoring. Bundles are grouped separately.
+        groups, _rejected = group_results(query, items)
+
         deal_results: List[DealResult] = []
-        scores: List[float] = []
 
-        for item in items:
-            current_price = self._parse_price(item.get("price"))
-            if current_price is None:
-                continue
+        for group_name, group_items in groups.items():
+            # Market average (median) is computed within the like-for-like group.
+            group_prices = [
+                price
+                for price in (
+                    parse_price(item.get("price", item.get("extracted_price")))
+                    for item in group_items
+                )
+                if price is not None
+            ]
+            group_avg = market_average(group_prices)
+            group_size = len(group_items)
 
-            product_name = item.get("title", "Unknown")
-            store = item.get("source", "Unknown")
-            url = item.get("product_link", "")
-            discount = self._parse_discount(item)
-            deal_score = self._calculate_deal_score(current_price, discount)
-            confidence = self._calculate_confidence(query, product_name, current_price)
+            # Duplicate suppression: collapse the same product (across duplicate
+            # rows / sellers) into one, and pick the best offer.
+            clusters = consolidate_offers(group_items)
 
-            deal = DealResult(
-                id=url or f"deal-{len(deal_results) + 1}",
-                specialist=self.metadata.name,
-                product_name=product_name,
-                current_price=current_price,
-                historical_lowest_price=None,
-                discount_percent=discount,
-                store=store,
-                store_reputation="Trusted",
-                platform=self._detect_platform(item),
-                drm=None,
-                region_lock=None,
-                bundle_included=False,
-                url=url,
-                deal_score=deal_score,
-                confidence_score=confidence,
-                timestamp=datetime.now(timezone.utc),
-            )
+            for cluster_items in clusters.values():
+                item, other_offers = best_offer(cluster_items, group_avg)
 
-            deal_results.append(deal)
-            scores.append(deal_score)
+                current_price = parse_price(item.get("price", item.get("extracted_price")))
+                if current_price is None:
+                    continue
+
+                product_name = item.get("title", "Unknown")
+                store = item.get("source", "Unknown")
+
+                breakdown = score_item(
+                    item,
+                    query,
+                    group_avg,
+                    historical_price=history.get(product_name),
+                )
+
+                if breakdown.excluded:
+                    continue
+
+                discount = self._parse_discount(item)
+
+                # Never store a Google Shopping URL. Use a direct retailer link
+                # when already present, otherwise the retailer homepage as a
+                # cheap fallback. The direct product URL is resolved lazily (via
+                # the immersive product API) for the deal that actually gets
+                # posted, so we avoid an extra API call for every search result.
+                retailer_url = resolve_item_url(item, use_immersive=False)
+
+                reasons = [
+                    f"[+] Matched product group '{group_name}' "
+                    f"(compared against {group_size} like-for-like listing(s))"
+                ]
+                if other_offers:
+                    cheapest_alt = ", ".join(
+                        f"{o['store']} ${o['price']:.2f}" for o in other_offers[:3]
+                    )
+                    reasons.append(
+                        f"[+] Best of {len(other_offers) + 1} offers for this product "
+                        f"(also: {cheapest_alt})"
+                    )
+                reasons += breakdown.reasons
+
+                deal = DealResult(
+                    id=str(item.get("product_id") or f"deal-{len(deal_results) + 1}"),
+                    specialist=self.metadata.name,
+                    product_name=product_name,
+                    current_price=current_price,
+                    historical_lowest_price=history.get(product_name),
+                    discount_percent=discount,
+                    store=store,
+                    store_reputation=breakdown.reputation,
+                    platform=self._detect_platform(item),
+                    drm=None,
+                    region_lock=None,
+                    bundle_included=group_name.endswith("_bundle"),
+                    url=retailer_url or "",
+                    retailer_url=retailer_url,
+                    deal_score=breakdown.deal_score,
+                    confidence_score=breakdown.confidence_score,
+                    timestamp=datetime.now(timezone.utc),
+                    metadata={
+                        "immersive_token": item.get("immersive_product_page_token"),
+                        "source": store,
+                        "product_type": classify_product_type(product_name).value,
+                        "product_group": group_name,
+                        "offer_count": len(other_offers) + 1,
+                        "other_offers": other_offers,
+                    },
+                    score_reasons=reasons,
+                )
+
+                deal_results.append(deal)
 
         return sorted(deal_results, key=lambda deal: deal.deal_score, reverse=True)
-
-    def _parse_price(self, price_value: Any) -> Optional[float]:
-        if price_value is None:
-            return None
-
-        try:
-            return float(str(price_value).replace("$", "").replace(",", ""))
-        except (ValueError, TypeError):
-            return None
 
     def _parse_discount(self, item: Dict[str, Any]) -> Optional[float]:
         discount = item.get("discount") or item.get("savings")
@@ -108,17 +166,6 @@ class Merchant(BaseAgent):
             return float(discount)
         except (ValueError, TypeError):
             return None
-
-    def _calculate_deal_score(self, price: float, discount: Optional[float]) -> float:
-        price_score = max(0.0, min(1.0, 500 / (price + 1)))
-        discount_score = max(0.0, min(1.0, (discount or 0.0) / 100))
-        return round((price_score * 0.6) + (discount_score * 0.4), 3)
-
-    def _calculate_confidence(self, query: str, title: str, price: float) -> float:
-        relevance = matches_search(query, title)
-        normalized_relevance = min(max(relevance / max(len(query.split()), 1), 0.0), 1.0)
-        price_score = max(0.0, min(1.0, 500 / (price + 1)))
-        return round((normalized_relevance * 0.7) + (price_score * 0.3), 3)
 
     def _detect_platform(self, item: Dict[str, Any]) -> Optional[str]:
         title = str(item.get("title", "")).lower()
