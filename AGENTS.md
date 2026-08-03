@@ -38,9 +38,14 @@ single external HTTP boundary `search_api.google_shopping_search` (also imported
 else brand+model+variant), and `best_offer` picks the cheapest realistic offer per cluster
 (skipping unrealistic lowballs). One `DealResult` is emitted per product; the alternatives
 are stored in `metadata["other_offers"]` and shown as "Also available at" in the embed.
-Limitation: SerpAPI's immersive stores don't include per-seller prices and `google_product`
-isn't available on this key, so cross-retailer price comparison uses the shopping-result
-rows. Matching by GTIN/UPC/MPN is the intended next step.
+`canonical_product_key` delegates to `tools/product_fingerprint.product_fingerprint`, which
+identifies a product by GTIN > UPC > MPN (explicit field, else parsed from the title, e.g.
+`CFI-7119`; spec tokens like `DDR5-6000`/`8-Core` are filtered) > Google `product_id` >
+brand+model+variant text. This lets the same product collapse across retailers even when
+Google assigns different `product_id`s.
+Limitation: SerpAPI's shopping rows rarely carry explicit gtin/upc/mpn fields and immersive
+stores lack per-seller prices (`google_product` isn't available on this key), so MPN is
+usually title-parsed and cross-retailer price comparison uses the shopping-result rows.
 
 ### Product relevance / grouping (before scoring)
 `tools/product_relevance.py` runs before scoring in `Merchant._build_deals`:

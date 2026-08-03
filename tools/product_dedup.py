@@ -21,35 +21,17 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from tools.deal_scoring import UNREALISTIC_RATIO, parse_price
-from tools.product_relevance import _modifiers, _required_model_tokens, _tokens
-
-BRANDS = (
-    "asus", "msi", "gigabyte", "zotac", "pny", "evga", "sapphire", "xfx",
-    "powercolor", "inno3d", "gainward", "palit", "sony", "microsoft",
-    "nintendo", "amd", "intel", "nvidia", "dell", "hp", "lenovo", "acer",
-    "corsair", "nzxt",
-)
-
-
-def _brand(title: str) -> str:
-    tokens = _tokens(title, keep_stopwords=True)
-    for tok in tokens:
-        if tok in BRANDS:
-            return tok
-    return ""
+from tools.product_fingerprint import product_fingerprint
 
 
 def canonical_product_key(item: Dict[str, Any]) -> str:
-    """A stable identity for a product across duplicate listings / sellers."""
-    product_id = str(item.get("product_id") or "").strip()
-    if product_id:
-        return f"pid:{product_id}"
+    """A stable identity for a product across duplicate listings / sellers.
 
-    title = item.get("title", "") or ""
-    brand = _brand(title)
-    models = ",".join(sorted(set(_required_model_tokens(title))))
-    mods = ",".join(sorted(_modifiers(title)))
-    return f"title:{brand}|{models}|{mods}"
+    Delegates to :func:`product_fingerprint`, which prefers real identifiers
+    (GTIN / UPC / MPN) and falls back to Google's product_id and then to a
+    brand + model + variant text key.
+    """
+    return product_fingerprint(item)
 
 
 def consolidate_offers(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:

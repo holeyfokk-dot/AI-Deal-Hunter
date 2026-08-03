@@ -161,14 +161,25 @@ RTX 5070 ASUS TUF OC → Amazon $589 · Best Buy $579 · Newegg $574 · Walmart 
                      → one product, best offer = Newegg $574
 ```
 
-Products are identified by Google's catalog `product_id` when available, with a
-brand + model + variant fallback. Unrealistic lowball prices are not chosen as the
-best offer when a realistic alternative exists, and the alternatives are shown as
-"Also available at" in the Discord embed.
+Products are identified by a **fingerprint** (`tools/product_fingerprint.py`) that
+prefers real global identifiers, most-trusted first:
 
-> **Next step:** identify products by **GTIN / UPC / MPN / Manufacturer Part
-> Number** (e.g. `90YV0M80-M0AA00`) instead of text, for exact cross-retailer
-> matching. `product_id` is the closest identifier SerpAPI exposes today.
+```
+GTIN  >  UPC  >  MPN (field)  >  MPN (parsed from title, e.g. CFI-7119)
+      >  Google product_id  >  brand + model + variant (text)
+```
+
+So the same product from different retailers collapses even when Google assigns
+different `product_id`s, as long as a shared manufacturer part number is present.
+The MPN parser ignores spec-looking tokens (e.g. `DDR5-6000`, `8-Core`).
+Unrealistic lowball prices are not chosen as the best offer when a realistic
+alternative exists, and the alternatives are shown as "Also available at" in the
+Discord embed.
+
+> SerpAPI's shopping results don't expose explicit `gtin`/`upc`/`mpn` fields on
+> this key, so those are read when present and the MPN is otherwise parsed from
+> the title; the fingerprint accepts explicit identifier fields for when a richer
+> data source is added.
 
 ## Deal scoring (false-positive reduction)
 
